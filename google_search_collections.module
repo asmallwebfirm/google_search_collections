@@ -1,0 +1,250 @@
+<?php
+
+/**
+ * @file
+ * Module hooks and functions for the Google Search Collections module.
+ */
+
+
+/**
+ * Implements hook_menu().
+ */
+function google_search_collections_menu() {
+  $prefix = 'search';
+  $items = array();
+
+  drupal_static_reset('search_get_info');
+  $default_info = search_get_default_module_info();
+  foreach (google_search_collections_get_definitions() as $path => $definition) {
+    $items[$prefix . '/' . $path] = array(
+      'title' => $definition['title'],
+      'page callback' => 'google_search_collections_search',
+      'page arguments' => array($path, ''),
+      //'access callback' => '_search_menu_access',
+      //'access arguments' => array($module),
+      'access callback' => TRUE,
+      'type' => MENU_LOCAL_TASK,
+      'file path' => '/',
+      'file' => isset($definition['file']) ? $definition['file'] : NULL,
+      'weight' => isset($definition['weight']) ? $definition['weight'] : 0,
+    );
+
+    $items[$prefix . '/' . $path . '/%menu_tail'] = array(
+      'title' => $definition['title'],
+      'load arguments' => array('%map', '%index'),
+      'page callback' => 'google_search_collections_search',
+      'page arguments' => array($path, 2),
+      //'access callback' => '_search_menu_access',
+      //'access arguments' => array($module),
+      'access callback' => TRUE,
+      'type' => MENU_LOCAL_TASK,
+      'file path' => '/',
+      'file' => isset($definition['file']) ? $definition['file'] : NULL,
+      'weight' => isset($definition['weight']) ? $definition['weight'] : 0,
+      'tab_root' => $prefix . '/' . $default_info['path'] . '/%',
+      'tab_parent' => $prefix . '/' . $default_info['path'],
+    );
+  }
+
+  return $items;
+}
+
+/**
+ * Implements hook_menu_alter().
+ */
+function google_search_collections_menu_alter(&$menu) {
+  // Remove the default GSS search local task in favor of our collections.
+  unset($menu['search/gss'], $menu['search/gss/%menu_tail']);
+}
+
+/**
+ * Page callback, wraps GSA or GSS search page views for maximum control.
+ *
+ * @param string $collection
+ *   The Google Search collection for which the current search is taking place.
+ *
+ * @param string $keys
+ *   The search query.
+ *
+ * @return
+ *   Themed search results for the given collection and keys.
+ */
+function google_search_collections_search($collection, $keys = '') {
+  $definition = google_search_collections_get_definition($collection);
+
+  if ($definition['module'] === 'gss') {
+    require_once(drupal_get_path('module', 'search') . '/search.pages.inc');
+    $callback = 'search_view';
+    $arguments = array('gss', $keys);
+  }
+  elseif ($definition['module'] === 'google_appliance') {
+    //
+  }
+  else {
+    $callback = FALSE;
+  }
+
+  return $callback ? call_user_func_array($callback, $arguments) : FALSE;
+}
+
+/**
+ * Implements hook_form_alter().
+ */
+function google_search_collections_form_alter(&$form, &$form_state, $form_id) {
+  $collection = google_search_collections_get_active_collection();
+  switch ($form_id) {
+    // The GSS module uses core search, perform clean-up here.
+    case 'search_form':
+    case 'search_block_form':
+    case 'search_theme_form':
+      $form['#submit'][] = 'google_search_collections_gss_submit';
+      $form['#action'] = str_replace('/gss', '/' . $collection, $form['#action']);
+      break;
+  }
+}
+
+function google_search_collections_gss_search_key_alter(&$key) {
+  // Apply inurl and -inurl pseudo-params.
+  $collection = google_search_collections_get_active_collection();
+  $definition = google_search_collections_get_definition($collection);
+
+  if (isset($definition['inurl'])) {
+    foreach ($definition['inurl'] as $inurl) {
+      $key .= ' inurl:' . check_plain($inurl);
+    }
+  }
+
+  if (isset($definition['-inurl'])) {
+    foreach ($definition['-inurl'] as $not_inurl) {
+      $key .= ' -inurl:' . check_plain($not_inurl);
+    }
+  }
+}
+
+/**
+ * Implements hook_preprocess_gss_result().
+ *
+ * Ensures that "inurl" and other pseudo parameters are not included in user-
+ * facing search text.
+ */
+function google_search_collections_preprocess_gss_result(&$variables) {
+  $result = $variables['result'];
+  if (empty($result['link']) && empty($result['title'])) {
+    $default_no_results = variable_get('gss_no_results', array(
+      'value' => t('No results'),
+      'format' => NULL,
+    ));
+    $empty_results = format_string($default_no_results['value'], array(
+      '@query' => arg(2),
+    ));
+    $variables['snippet'] = check_markup($empty_results, $default_no_results['format']);
+  }
+}
+
+/**
+ * Submit handler for the GSS search form.
+ */
+function google_search_collections_gss_submit($form, &$form_state) {
+  if (!$collection = google_search_collections_get_active_collection()) {
+    $collection = google_search_collections_get_default_collection();
+  }
+
+  if (is_array($form_state['redirect'])) {
+    $redirect_to = &$form_state['redirect'][0];
+  }
+  else {
+    $redirect_to = &$form_state['redirect'];
+  }
+  $redirect_to = str_replace('/gss', '/' . $collection, $redirect_to);
+}
+
+/**
+ * Returns the current, active Google Search collection.
+ *
+ * @return string|bool
+ *   The current active search collection, or false if no collection could be
+ *   found.
+ */
+function google_search_collections_get_active_collection() {
+  $args = arg();
+  if (count($args) === 2 && $args[0] === 'search') {
+    return $args[1];
+  }
+  else {
+    return FALSE;
+  }
+}
+
+/**
+ * Returns the default Google Search collection.
+ */
+function google_search_collections_get_default_collection() {
+  $collections = google_search_collections_get_definitions();
+
+  // Attempt to find the default.
+  foreach ($collections as $collection => $definition) {
+    if (isset($definition['default']) && $definition['default']) {
+      return $collection;
+    }
+  }
+
+  // If no default is set, return the first one.
+  reset($collections);
+  return key($collections);
+}
+
+/**
+ * Returns a single collection definition.
+ *
+ * @param string $collection
+ *   The desired Google Search collection.
+ *
+ * @return array|bool
+ *   Returns the collection definition if one is found, FALSE otherwise.
+ */
+function google_search_collections_get_definition($collection) {
+  $definitions = google_search_collections_get_definitions();
+  return isset($definitions[$collection]) ? $definitions[$collection] : FALSE;
+}
+
+/**
+ * Helper function that stores search collection configs (temporary, put a UI on
+ * top of this).
+ *
+ * @todo: Instead of hardcoded, custom... Turn this into a ctools thing.
+ */
+function google_search_collections_get_definitions() {
+  return array(
+    'all' => array(
+      'title' => 'All Results',
+      'module' => 'gss',
+      'weight' => -6,
+      'default' => TRUE,
+    ),
+    'vizzes' => array(
+      'title' => 'Vizzes',
+      'module' => 'gss',
+      'weight' => -5,
+      'inurl' => array('vizhome'),
+    ),
+    'authors' => array(
+      'title' => 'Authors',
+      'module' => 'gss',
+      'weight' => -4,
+      'inurl' => array('profile'),
+      '-iurl' => array('vizhome'),
+    ),
+    'blogs' => array(
+      'title' => 'Blogs',
+      'module' => 'gss',
+      'weight' => -3,
+      'inurl' => array('blog'),
+    ),
+    'resources' => array(
+      'title' => 'Resources',
+      'module' => 'gss',
+      'weight' => -2,
+      'inurl' => array('community'),
+    ),
+  );
+}
