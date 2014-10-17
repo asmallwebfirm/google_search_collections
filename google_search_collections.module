@@ -103,6 +103,9 @@ function google_search_collections_form_alter(&$form, &$form_state, $form_id) {
   }
 }
 
+/**
+ * Implements hook_gss_search_key_alter().
+ */
 function google_search_collections_gss_search_key_alter(&$key) {
   // Apply inurl and -inurl pseudo-params.
   $collection = google_search_collections_get_active_collection();
