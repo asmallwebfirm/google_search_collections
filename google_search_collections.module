@@ -7,6 +7,18 @@
 
 
 /**
+ * Implements hook_permission().
+ */
+function google_search_collections_permission() {
+  return array(
+    'administer google search collections' => array(
+      'title' => t('Administer google search collections'),
+      'description' => t('Add, update, and export search collection configs.'),
+    ),
+  );
+}
+
+/**
  * Implements hook_menu().
  */
 function google_search_collections_menu() {
@@ -16,21 +28,24 @@ function google_search_collections_menu() {
   drupal_static_reset('search_get_info');
   $default_info = search_get_default_module_info();
   foreach (google_search_collections_get_definitions() as $path => $definition) {
+    // Ignore disabled collections.
+    if (isset($definition->disabled) && $definition->disabled) {
+      continue;
+    }
+
     $items[$prefix . '/' . $path] = array(
-      'title' => $definition['title'],
+      'title' => $definition->title,
       'page callback' => 'google_search_collections_search',
       'page arguments' => array($path, ''),
       //'access callback' => '_search_menu_access',
       //'access arguments' => array($module),
       'access callback' => TRUE,
       'type' => MENU_LOCAL_TASK,
-      'file path' => '/',
-      'file' => isset($definition['file']) ? $definition['file'] : NULL,
-      'weight' => isset($definition['weight']) ? $definition['weight'] : 0,
+      'weight' => isset($definition->data['weight']) ? $definition->data['weight'] : 0,
     );
 
     $items[$prefix . '/' . $path . '/%menu_tail'] = array(
-      'title' => $definition['title'],
+      'title' => $definition->title,
       'load arguments' => array('%map', '%index'),
       'page callback' => 'google_search_collections_search',
       'page arguments' => array($path, 2),
@@ -38,9 +53,7 @@ function google_search_collections_menu() {
       //'access arguments' => array($module),
       'access callback' => TRUE,
       'type' => MENU_LOCAL_TASK,
-      'file path' => '/',
-      'file' => isset($definition['file']) ? $definition['file'] : NULL,
-      'weight' => isset($definition['weight']) ? $definition['weight'] : 0,
+      'weight' => isset($definition->data['weight']) ? $definition->data['weight'] : 0,
       'tab_root' => $prefix . '/' . $default_info['path'] . '/%',
       'tab_parent' => $prefix . '/' . $default_info['path'],
     );
@@ -72,7 +85,7 @@ function google_search_collections_menu_alter(&$menu) {
 function google_search_collections_search($collection, $keys = '') {
   $definition = google_search_collections_get_definition($collection);
 
-  if ($definition['module'] === 'gss') {
+  if ($definition->data['module'] === 'gss') {
     require_once(drupal_get_path('module', 'search') . '/search.pages.inc');
     $callback = 'search_view';
     $arguments = array('gss', $keys);
@@ -107,20 +120,12 @@ function google_search_collections_form_alter(&$form, &$form_state, $form_id) {
  * Implements hook_gss_search_key_alter().
  */
 function google_search_collections_gss_search_key_alter(&$key) {
-  // Apply inurl and -inurl pseudo-params.
+  // Apply query terms.
   $collection = google_search_collections_get_active_collection();
   $definition = google_search_collections_get_definition($collection);
 
-  if (isset($definition['inurl'])) {
-    foreach ($definition['inurl'] as $inurl) {
-      $key .= ' inurl:' . check_plain($inurl);
-    }
-  }
-
-  if (isset($definition['-inurl'])) {
-    foreach ($definition['-inurl'] as $not_inurl) {
-      $key .= ' -inurl:' . check_plain($not_inurl);
-    }
+  if (isset($definition->data['queryterms']) && !empty($definition->data['queryterms'])) {
+    $key .= ' ' . check_plain($definition->data['queryterms']);
   }
 }
 
@@ -211,43 +216,95 @@ function google_search_collections_get_definition($collection) {
 }
 
 /**
- * Helper function that stores search collection configs (temporary, put a UI on
- * top of this).
- *
- * @todo: Instead of hardcoded, custom... Turn this into a ctools thing.
+ * Helper function that returns all currently known search collection configs.
  */
-function google_search_collections_get_definitions() {
-  return array(
-    'all' => array(
-      'title' => 'All Results',
-      'module' => 'gss',
-      'weight' => -6,
-      'default' => TRUE,
-    ),
-    'vizzes' => array(
-      'title' => 'Vizzes',
-      'module' => 'gss',
-      'weight' => -5,
-      'inurl' => array('vizhome'),
-    ),
-    'authors' => array(
-      'title' => 'Authors',
-      'module' => 'gss',
-      'weight' => -4,
-      'inurl' => array('profile'),
-      '-iurl' => array('vizhome'),
-    ),
-    'blogs' => array(
-      'title' => 'Blogs',
-      'module' => 'gss',
-      'weight' => -3,
-      'inurl' => array('blog'),
-    ),
-    'resources' => array(
-      'title' => 'Resources',
-      'module' => 'gss',
-      'weight' => -2,
-      'inurl' => array('community'),
-    ),
-  );
+function google_search_collections_get_definitions($reset = FALSE) {
+  ctools_include('export');
+  $definitions = drupal_static(__FUNCTION__, array());
+
+  if ($definitions === array() || $reset) {
+    ctools_export_load_object_reset('google_search_collections');
+    $definitions = ctools_export_load_object('google_search_collections', 'all');
+  }
+
+  return $definitions;
+}
+
+/**
+ * Implements hook_ctools_plugin_directory().
+ */
+function google_search_collections_ctools_plugin_directory($module, $type) {
+  // Load the export_ui plugin.
+  if ($type === 'export_ui') {
+    return 'plugins/export_ui';
+  }
+}
+
+/**
+ * Export callback for Google search collection exportables.
+ */
+function google_search_collections_export($context, $indent = '') {
+  $output = ctools_export_object('google_search_collections', $context, $indent);
+  $translatables = array();
+  foreach (array('title') as $key) {
+    if (!empty($context->{$key})) {
+      $translatables[] = $context->{$key};
+    }
+  }
+  $translatables = array_filter(array_unique($translatables));
+  if (!empty($translatables)) {
+    $output .= "\n";
+    $output .= "{$indent}// Translatables included for use with string extractors like potx.\n";
+    sort($translatables);
+    foreach ($translatables as $string) {
+      $output .= "{$indent}t(" . ctools_var_export($string) . ");\n";
+    }
+  }
+  return $output;
+}
+
+/**
+ * Save callback for Google search collection exportables.
+ */
+function google_search_collections_save($object) {
+  if ($object->export_type & EXPORT_IN_DATABASE) {
+    // Existing record.
+    $update = array('pid');
+  }
+  else {
+    // New record.
+    $update = array();
+    $object->export_type = EXPORT_IN_DATABASE;
+  }
+  $return = drupal_write_record('google_search_collections', $object, $update);
+
+  // Always rebuild the menu when saving a search collection.
+  variable_set('menu_rebuild_needed', TRUE);
+
+  return $return;
+}
+
+/**
+ * Status set callback for Google search collection exportables.
+ */
+function google_search_collections_set_status($object, $status) {
+  ctools_export_set_object_status($object, $status);
+
+  // Always rebuild the menu when updating the status of a search collection.
+  variable_set('menu_rebuild_needed', TRUE);
+}
+
+/**
+ * Delete callback for Google search collection exportables.
+ */
+function google_search_collections_delete($object) {
+  // If we were sent an object, get the export key from it. Otherwise
+  // assume we were sent the export key.
+  $value = is_object($object) ? $object->pid : $object;
+  db_delete('google_search_collections')
+    ->condition('pid', $value)
+    ->execute();
+
+  // Always rebuild the menu when deleting a search collection.
+  variable_set('menu_rebuild_needed', TRUE);
 }
