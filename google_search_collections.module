@@ -25,6 +25,18 @@ function google_search_collections_menu() {
   $prefix = 'search';
   $items = array();
 
+  // Global configurations.
+  $items['admin/structure/google-search-collections/settings'] = array(
+    'title' => 'Global settings',
+    'description' => 'Configure global settings related to Google search collections.',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('google_search_collections_settings'),
+    'file' => 'google_search_collections.admin.inc',
+    'type' => MENU_LOCAL_TASK,
+    'access arguments' => array('administer google search collections'),
+  );
+
+  // Adding menu items for defined collections.
   drupal_static_reset('search_get_info');
   $default_info = search_get_default_module_info();
   foreach (google_search_collections_get_definitions() as $path => $definition) {
@@ -187,18 +199,12 @@ function google_search_collections_get_active_collection() {
  * Returns the default Google Search collection.
  */
 function google_search_collections_get_default_collection() {
-  $collections = google_search_collections_get_definitions();
-
-  // Attempt to find the default.
-  foreach ($collections as $collection => $definition) {
-    if (isset($definition['default']) && $definition['default']) {
-      return $collection;
-    }
+  // If none is provided, assume the first provided is the default.
+  if (!$default = variable_get('google_search_collections_default_collection', FALSE)) {
+    $default = key(google_search_collections_get_definitions());
   }
 
-  // If no default is set, return the first one.
-  reset($collections);
-  return key($collections);
+  return $default;
 }
 
 /**
@@ -217,12 +223,16 @@ function google_search_collections_get_definition($collection) {
 
 /**
  * Helper function that returns all currently known search collection configs.
+ *
+ * @param bool $reset
+ *   (Optional) Whether or not the search collection definitions should be
+ *   re-calculated. Defaults to FALSE.
  */
 function google_search_collections_get_definitions($reset = FALSE) {
-  ctools_include('export');
   $definitions = drupal_static(__FUNCTION__, array());
 
   if ($definitions === array() || $reset) {
+    ctools_include('export');
     ctools_export_load_object_reset('google_search_collections');
     $definitions = ctools_export_load_object('google_search_collections', 'all');
   }

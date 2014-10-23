@@ -80,3 +80,10 @@ function google_search_collections_install() {
     ->condition('name', 'google_search_collections')
     ->execute();
 }
+
+/**
+ * Implements hook_uninstall().
+ */
+function google_search_collections_uninstall() {
+  variable_del('google_search_collections_default_collection');
+}
