@@ -213,7 +213,7 @@ function google_search_collections_get_default_collection() {
  * @param string $collection
  *   The desired Google Search collection.
  *
- * @return array|bool
+ * @return object|bool
  *   Returns the collection definition if one is found, FALSE otherwise.
  */
 function google_search_collections_get_definition($collection) {
