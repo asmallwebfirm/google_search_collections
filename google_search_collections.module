@@ -79,7 +79,9 @@ function google_search_collections_menu() {
  */
 function google_search_collections_menu_alter(&$menu) {
   // Remove the default GSS search local task in favor of our collections.
-  unset($menu['search/gss'], $menu['search/gss/%menu_tail']);
+  if (variable_get('google_search_collections_unset_module_defaults', TRUE)) {
+    unset($menu['search/gss'], $menu['search/gss/%menu_tail']);
+  }
 }
 
 /**
@@ -116,7 +118,10 @@ function google_search_collections_search($collection, $keys = '') {
  * Implements hook_form_alter().
  */
 function google_search_collections_form_alter(&$form, &$form_state, $form_id) {
-  $collection = google_search_collections_get_active_collection();
+  if (!$collection = google_search_collections_get_active_collection()) {
+    $collection = google_search_collections_get_default_collection();
+  }
+
   switch ($form_id) {
     // The GSS module uses core search, perform clean-up here.
     case 'search_form':

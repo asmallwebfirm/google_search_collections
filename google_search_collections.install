@@ -86,4 +86,5 @@ function google_search_collections_install() {
  */
 function google_search_collections_uninstall() {
   variable_del('google_search_collections_default_collection');
+  variable_del('google_search_collections_unset_module_defaults');
 }
